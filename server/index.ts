@@ -2,6 +2,10 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
+declare const process: {
+  env: { [key: string]: string | undefined };
+};
+
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -39,12 +43,31 @@ app.use((req, res, next) => {
 (async () => {
   const server = await registerRoutes(app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    // CRITICAL FIX: If headers have already been sent (e.g., by a successful redirect),
+    // delegate to the default Express error handler to close the connection gracefully.
+    if (res.headersSent) {
+      return next(err);
+    }
+
+    // Log the error stack in development for debugging
+    log(`[ERROR] ${req.method} ${req.path}: ${err.message}`);
+    if (app.get("env") === "development") {
+        console.error(err.stack);
+    }
+
+    // Send the error response
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
-    res.status(status).json({ message });
-    throw err;
+    // Prepare response body, only including stack trace in development
+    const responseBody: any = { message };
+    if (app.get("env") === "development" && err.stack) {
+        responseBody.stack = err.stack;
+    }
+
+    res.status(status).json(responseBody);
+    // REMOVED: `throw err;` - It should not be re-thrown after responding.
   });
 
   // importantly only setup vite in development and after
