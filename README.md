@@ -3,10 +3,6 @@
 
  A full-stack survey creation and management application built with a modern TypeScript tech stack. The application allows users to create anonymous surveys with multiple question types, collect responses, and analyze data through a comprehensive analytics dashboard. It features user authentication through Replit's OIDC system, a clean React frontend with shadcn/ui components, and a robust Express.js backend with PostgreSQL database integration.
 
-# User Preferences
-
-Preferred communication style: Simple, everyday language.
-
 # System Architecture
 
 ## Frontend Architecture
