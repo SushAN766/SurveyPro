@@ -3,7 +3,7 @@ import { Strategy, type VerifyFunction } from "openid-client/passport";
 
 import passport from "passport";
 import session from "express-session";
-import type { Express, RequestHandler } from "express";
+import type { Express, Request, RequestHandler } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
@@ -66,6 +66,20 @@ async function upsertUser(
   });
 }
 
+/**
+ * Helper function to correctly determine the full domain (including port 
+ * when running locally) to match the registered Passport strategy name.
+ * Fixes: "Unknown authentication strategy" error.
+ */
+function getAuthStrategyName(req: Request) {
+  // Check if a non-standard port is present on the socket (typical for local development)
+  const port = req.socket.localPort;
+  const fullDomain = (port && port !== 80 && port !== 443) 
+    ? `${req.hostname}:${port}` 
+    : req.hostname;
+  return `replitauth:${fullDomain}`;
+}
+
 export async function setupAuth(app: Express) {
   app.set("trust proxy", 1);
   app.use(getSession());
@@ -86,12 +100,17 @@ export async function setupAuth(app: Express) {
 
   for (const domain of process.env
     .REPLIT_DOMAINS!.split(",")) {
+    // ⚠️ PROTOCOL FIX FOR LOCAL TESTING: Use 'http' for localhost domains.
+    // If running in a production Replit environment, 'https' is correct,
+    // but local setup often needs 'http' to avoid a 400 Bad Request error.
+    const protocol = domain.includes('localhost') ? 'http' : 'https';
+
     const strategy = new Strategy(
       {
         name: `replitauth:${domain}`,
         config,
         scope: "openid email profile offline_access",
-        callbackURL: `https://${domain}/api/callback`,
+        callbackURL: `${protocol}://${domain}/api/callback`,
       },
       verify,
     );
@@ -102,14 +121,16 @@ export async function setupAuth(app: Express) {
   passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
   app.get("/api/login", (req, res, next) => {
-    passport.authenticate(`replitauth:${req.hostname}`, {
+    // 🛠️ Updated to use the helper function for correct strategy lookup
+    passport.authenticate(getAuthStrategyName(req), {
       prompt: "login consent",
       scope: ["openid", "email", "profile", "offline_access"],
     })(req, res, next);
   });
 
   app.get("/api/callback", (req, res, next) => {
-    passport.authenticate(`replitauth:${req.hostname}`, {
+    // 🛠️ Updated to use the helper function for correct strategy lookup
+    passport.authenticate(getAuthStrategyName(req), {
       successReturnToOrRedirect: "/",
       failureRedirect: "/api/login",
     })(req, res, next);
@@ -117,6 +138,7 @@ export async function setupAuth(app: Express) {
 
   app.get("/api/logout", (req, res) => {
     req.logout(() => {
+      // Use the request protocol for the post-logout redirect
       res.redirect(
         client.buildEndSessionUrl(config, {
           client_id: process.env.REPL_ID!,
